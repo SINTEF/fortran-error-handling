@@ -97,8 +97,7 @@ Then use your newly created routines:
 ----
 
 === Generating Stacktraces
-// TODO: URL
-For enabling stacktraces from errors, see instructions http://TODO:[here].
+For enabling stacktraces from errors, see instructions https://github.com/SINTEF/fortran-stacktrace#fortran-stacktrace[here].
 
 == Building
 
@@ -142,7 +141,7 @@ If you don't want to use CPM you can either use
 https://cmake.org/cmake/help/latest/module/FetchContent.html[FetchContent]
 manually or add this repo as a git submodule to your project. Then in your
 `CMakeLists.txt` add it as a subdirectory and use `target_link_libraries` to
-link against `error-handling`.
+link against `fortran-error-handling`.
 
 === Fortran Package Manager (FPM)
 
