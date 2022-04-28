@@ -116,7 +116,7 @@ https://github.com/cpm-cmake/CPM.cmake/[CMake Package Manager (CPM)]:
 [source,cmake]
 ----
 CPMAddPackage("https://github.com/SINTEF/fortran-error-handling.git@0.1.0")
-target_link_libraries(<your target> fortran-error-handling)
+target_link_libraries(<your target> error-handling)
 ----
 
 //TODO:
@@ -141,7 +141,7 @@ If you don't want to use CPM you can either use
 https://cmake.org/cmake/help/latest/module/FetchContent.html[FetchContent]
 manually or add this repo as a git submodule to your project. Then in your
 `CMakeLists.txt` add it as a subdirectory and use `target_link_libraries` to
-link against `fortran-error-handling`.
+link against `error-handling`.
 
 === Fortran Package Manager (FPM)
 

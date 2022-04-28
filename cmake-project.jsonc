@@ -1,5 +1,5 @@
 {
-    "name": "fortran-error-handling",
+    "name": "error-handling",
     "version": "0.1.0",
     "languages": ["Fortran"],
     "linker_language": "Fortran",

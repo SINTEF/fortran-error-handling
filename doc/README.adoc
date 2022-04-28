@@ -16,9 +16,9 @@ the call stack.
 It is also possible to programmatically identify and handle certain types or errors
 without terminating the application.
 
-//TODO: URL
 But perhaps most interesting is the ability to generate stacktraces along with any
-error when combined with the http://TODO:[fortran-stacktrace] library.
+error when combined with the https://github.com/SINTEF/fortran-stacktrace[fortran-stacktrace]
+library.
 This means that you can easily make even old legacy code output errors messages like this:
 
 image::stacktrace-example.png[]
@@ -50,8 +50,7 @@ include::../example/basic.f90[tag=run]
 ----
 
 === Generating Stacktraces
-// TODO: URL
-For enabling stacktraces from errors, see instructions http://TODO:[here].
+For enabling stacktraces from errors, see instructions https://github.com/SINTEF/fortran-stacktrace#fortran-stacktrace[here].
 
 == Building
 
@@ -70,7 +69,7 @@ https://github.com/cpm-cmake/CPM.cmake/[CMake Package Manager (CPM)]:
 [source,cmake]
 ----
 CPMAddPackage("https://github.com/SINTEF/fortran-error-handling.git@0.1.0")
-target_link_libraries(<your target> fortran-error-handling)
+target_link_libraries(<your target> error-handling)
 ----
 
 //TODO:

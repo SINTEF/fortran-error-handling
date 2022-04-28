@@ -1,4 +1,4 @@
-name = "fortran-error-handling"
+name = "error-handling"
 version = "0.1.0"
 license = "MIT"
 author = "Pål Levold"
