@@ -109,7 +109,7 @@ In your Fortran Package Manager `fpm.toml` configuration file, add this repo as 
 
 ```toml
 [dependencies]
-error-handling = { git = "https://github.com/SINTEF/fortran-error-handling.git", tag = "v0.5.0" }
+error-handling = { git = "https://github.com/SINTEF/fortran-error-handling.git", tag = "v0.1.0" }
 ```
 
 == API Reference
