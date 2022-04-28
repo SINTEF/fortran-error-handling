@@ -1,6 +1,13 @@
 = Fortran Error Handling
 :imagesdir: doc/
 
+
+:repo: SINTEF/fortran-error-handling
+**Efficient and easy to use error handling for modern Fortran.**
+
+image:https://github.com/{repo}/actions/workflows/built-test.yml/badge.svg[link="https://github.com/{repo}/actions/workflows/built-test.yml"]
+image:https://img.shields.io/github/v/release/{repo}?label=version&sort=semver[link="https://github.com/{repo}/releases"]
+
 Fortran does not have any built-in mechanisms for errors as seen in most
 other programming languages.
 Over the years, developers often have resorted to integer or logical arguments
