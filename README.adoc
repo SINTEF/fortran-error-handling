@@ -16,9 +16,9 @@ the call stack.
 It is also possible to programmatically identify and handle certain types or errors
 without terminating the application.
 
-//TODO: URL
 But perhaps most interesting is the ability to generate stacktraces along with any
-error when combined with the http://TODO:[fortran-stacktrace] library.
+error when combined with the https://github.com/SINTEF/fortran-stacktrace[fortran-stacktrace]
+library.
 This means that you can easily make even old legacy code output errors messages like this:
 
 image::stacktrace-example.png[]
