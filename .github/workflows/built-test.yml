@@ -1,0 +1,57 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+  release:
+
+jobs:
+  build:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - {
+            name: "Linux GCC",
+            os: ubuntu-latest,
+          }
+        # - {
+        #     name: "Windows",
+        #     os: windows-latest,
+        #   }
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: awvwgk/setup-fortran@main
+        id: setup-fortran
+        with:
+          compiler: gcc
+          version: 11
+      # - name: Install dependencies on windows
+      #   if: startsWith(matrix.config.os, 'windows')
+      #   shell: bash
+      #   run: |
+      #     choco install ninja cmake
+      #     ninja --version
+      #     cmake --version
+      #     rm /usr/bin/link
+      - name: Install dependencies on ubuntu
+        if: startsWith(matrix.config.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install ninja-build cmake
+          ninja --version
+          cmake --version
+          gfortran --version
+      - name: Build and Test
+        shell: bash
+        run: |
+          mkdir build
+          cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -G "Ninja"
+          cmake --build . --parallel
+          ctest -j$(nproc) --output-on-failure

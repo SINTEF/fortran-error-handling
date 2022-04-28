@@ -1,0 +1,19 @@
+name = "fortran-error-handling"
+version = "0.1.0"
+license = "MIT"
+author = "Pål Levold"
+maintainer = "https://github.com/plevold"
+copyright = "Copyright 2022, SINTEF Ocean"
+
+[build]
+auto-executables = true
+auto-tests = true
+auto-examples = true
+
+[install]
+library = false
+
+[dependencies]
+
+[dev-dependencies]
+

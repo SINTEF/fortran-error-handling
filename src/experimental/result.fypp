@@ -1,0 +1,135 @@
+! SPDX-FileCopyrightText: 2022 SINTEF Ocean
+! SPDX-License-Identifier: MIT
+
+!! Types extending result_t for (some) primitive types
+module error_handling_experimental_result
+    use iso_fortran_env, only: sp => real32, dp => real64
+    use error_handling_error, only: error_t
+    implicit none
+
+#:set type_kinds = [('real', 'sp'), ('real', 'dp'), ('complex', 'sp'), ('complex', 'dp'), ('integer', None), ('logical', None)]
+#:set ranks = [0, 1, 2, 3, 4]
+
+    private
+    public result_chars_t
+#:for item in type_kinds
+  #:for rank in ranks
+    #:set name = item[0]
+    #:set kind = item[1]
+    #:set tmp = '{}_{}'.format(name, kind) if kind else name
+    #:set suffix = '{}_rank{}'.format(tmp, rank) if rank > 0 else tmp
+    public result_${suffix}$_t
+    #:endfor
+#:endfor
+
+
+    type :: result_chars_t
+        character(len=:), allocatable :: value
+        type(error_t), allocatable :: error
+    contains
+        generic :: assignment(=) => assign_chars, assign_chars_error
+        procedure :: is_value => is_value_chars
+        procedure :: is_error => is_error_chars
+
+        procedure, private :: assign_chars
+        procedure, private :: assign_chars_error
+    end type
+
+
+#:for item in type_kinds
+  #:for rank in ranks
+    #:set name = item[0]
+    #:set kind = item[1]
+    #:set tmp = '{}_{}'.format(name, kind) if kind else name
+    #:set suffix = '{}_rank{}'.format(tmp, rank) if rank > 0 else tmp
+    #:set typename = '{}({})'.format(name, kind) if kind else name
+    #:set dim = '({})'.format(','.join([':'] * rank)) if rank else ''
+    type :: result_${suffix}$_t
+        ${typename}$, allocatable :: value${dim}$
+        type(error_t), allocatable :: error
+    contains
+        generic :: assignment(=) => assign_${suffix}$, assign_error_${suffix}$
+        procedure :: is_value => is_value_${suffix}$
+        procedure :: is_error => is_error_${suffix}$
+
+        procedure, private :: assign_${suffix}$
+        procedure, private :: assign_error_${suffix}$
+    end type
+
+
+    #:endfor
+#:endfor
+contains
+
+
+    pure subroutine assign_chars(lhs, rhs)
+        class(result_chars_t), intent(inout) :: lhs
+        character(len=*), intent(in) :: rhs
+
+        lhs%value = rhs
+    end subroutine
+
+
+    pure subroutine assign_chars_error(lhs, rhs)
+        class(result_chars_t), intent(inout) :: lhs
+        type(error_t), intent(in) :: rhs
+
+        lhs%error = rhs
+    end subroutine
+
+
+    logical pure function is_value_chars(this) result(is_value)
+        class(result_chars_t), intent(in) :: this
+
+        is_value = .not. allocated(this%error)
+    end function
+
+
+    logical pure function is_error_chars(this) result(is_error)
+        class(result_chars_t), intent(in) :: this
+
+        is_error = allocated(this%error)
+    end function
+
+
+#:for item in type_kinds
+  #:for rank in ranks
+    #:set name = item[0]
+    #:set kind = item[1]
+    #:set tmp = '{}_{}'.format(name, kind) if kind else name
+    #:set suffix = '{}_rank{}'.format(tmp, rank) if rank > 0 else tmp
+    #:set typename = '{}({})'.format(name, kind) if kind else name
+    #:set dim = '({})'.format(','.join([':'] * rank)) if rank else ''
+    pure subroutine assign_${suffix}$(lhs, rhs)
+        class(result_${suffix}$_t), intent(inout) :: lhs
+        ${typename}$, intent(in) :: rhs${dim}$
+
+        lhs%value = rhs
+    end subroutine
+
+
+    pure subroutine assign_error_${suffix}$(lhs, rhs)
+        class(result_${suffix}$_t), intent(inout) :: lhs
+        type(error_t), intent(in) :: rhs
+
+        lhs%error = rhs
+    end subroutine
+
+
+    logical pure function is_value_${suffix}$(this) result(is_value)
+        class(result_${suffix}$_t), intent(in) :: this
+
+        is_value = .not. allocated(this%error)
+    end function
+
+
+    logical pure function is_error_${suffix}$(this) result(is_error)
+        class(result_${suffix}$_t), intent(in) :: this
+
+        is_error = allocated(this%error)
+    end function
+
+
+    #:endfor
+#:endfor
+end module

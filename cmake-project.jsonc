@@ -1,0 +1,14 @@
+{
+    "name": "fortran-error-handling",
+    "version": "0.1.0",
+    "languages": ["Fortran"],
+    "linker_language": "Fortran",
+    "release_dbg_info": true,
+
+    "dependencies": {
+    },
+
+    "dev-dependencies": {
+    }
+
+}
