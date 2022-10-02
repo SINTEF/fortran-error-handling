@@ -1,6 +1,6 @@
 ! tag::usage[]
 module sqrt_inplace_mod
-    use error_handling, only: error_t
+    use error_handling, only: error_t, fail
     implicit none
 
     private
@@ -10,10 +10,10 @@ contains
 
     pure subroutine sqrt_inplace(x, error)
         real, intent(inout) :: x
-        type(error_t), allocatable, intent(inout) :: error
+        class(error_t), allocatable, intent(inout) :: error
 
         if (x <= 0.0) then
-            error = error_t('x is negative')
+            error = fail('x is negative')
             return
         end if
         x = sqrt(x)
@@ -33,12 +33,12 @@ contains
 
     subroutine run
 ! tag::run[]
-        use error_handling, only: error_t, set_error_hook
+        use error_handling, only: error_t
         use sqrt_inplace_mod, only: sqrt_inplace
         implicit none
 
         real :: x
-        type(error_t), allocatable :: error
+        class(error_t), allocatable :: error
 
         ! Here we are using a labelled block to separate multiple fallible
         ! procedure calls from the code that handles any error
@@ -60,7 +60,7 @@ contains
             return
         end block fallible
         ! If we're here then an error has happened!
-        write(*, '(a)') error%display()
+        write(*, '(a,a)') 'Error: ', error%to_chars()
 ! end::run[]
     end subroutine
 end module
