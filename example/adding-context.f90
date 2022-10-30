@@ -1,58 +1,23 @@
-module bounded_mod
-    use error_handling, only: error_t
+module processing_mod
+    use error_handling, only: error_t, wrap_error, fail
     implicit none
 
 contains
 
-    pure subroutine add_bounded(i, j, error)
-        integer, intent(inout) :: i
-        integer, intent(in) :: j
-        type(error_t), allocatable, intent(inout) :: error
+    pure subroutine process_array(arr, res, error)
+        integer, intent(inout) :: arr(:)
+        integer, intent(out) :: res
+        class(error_t), allocatable, intent(inout) :: error
 
-        if (i > 25) then
-            error = error_t('i is too large')
-            return
-        end if
-        i = i + j
-    end subroutine
-
-
-    pure subroutine multiply_bounded(i, j, error)
-        integer, intent(inout) :: i
-        integer, intent(in) :: j
-        type(error_t), allocatable, intent(inout) :: error
-
-        if (i > 25) then
-            error = error_t('i is too large')
-            return
-        end if
-        i = i * j
-    end subroutine
-
-end module
-
-
-module some_mod
-    use bounded_mod, only: add_bounded, multiply_bounded
-    use error_handling, only: error_t
-    implicit none
-
-contains
-
-    pure subroutine do_something(i, error)
-        integer, intent(inout) :: i
-        type(error_t), allocatable, intent(inout) :: error
-
-        integer :: j
-        character(len=20) :: i_value, j_value
+        integer :: i
+        character(len=20) :: i_value
 
         ! Here we are using a block to separate multiple fallible procedure calls
         ! from the code that handles any error
+        res = 0
         fallible: block
-            do j = 1, 5
-                call add_bounded(i, j + 2, error)
-                if (allocated(error)) exit fallible
-                call multiply_bounded(i, j, error)
+            do i = 1, size(arr)
+                call accumulate_and_check(arr(i), res, error)
                 if (allocated(error)) exit fallible
             end do
             ! Return for subroutine on success, code below is only for
@@ -61,26 +26,41 @@ contains
         end block fallible
         ! Provide some context with error
         write(i_value, *) i
-        write(j_value, *) j
-        call error%with_cause('Could not do some thing with i = '    &
-            // trim(adjustl(i_value)) // ' and j = ' // trim(adjustl(j_value)))
+        call wrap_error(error, 'Processing of array failed at element '    &
+            // trim(adjustl(i_value)))
     end subroutine
+
+
+    pure subroutine accumulate_and_check(i, res, error)
+        integer, intent(in) :: i
+        integer, intent(inout) :: res
+        class(error_t), allocatable, intent(inout) :: error
+
+        if (res > 50) then
+            error = fail('Magic limit reached')
+            return
+        end if
+        res = res + i
+    end subroutine
+
 end module
 
 
 program basic_example
-    use error_handling, only: error_t
-    use some_mod, only: do_something
+    use error_handling, only: error_t, wrap_error
+    use processing_mod, only: process_array
     implicit none
-    integer :: i
-    type(error_t), allocatable :: error
 
-    i = 10
-    call do_something(i, error)
+    integer :: res
+    integer, allocatable :: arr(:)
+    class(error_t), allocatable :: error
+
+    arr = [1, 2, 3, 5, 8, 12, 11, 20, 5, 2, 4, 6]
+    call process_array(arr, res, error)
     if (allocated(error)) then
-        call error%with_cause('Example failed (but that was the intent...)')
-        write(*,'(a)') error%display()
+        call wrap_error(error, 'Example failed (but that was the intent...)')
+        write(*,'(a,a)') 'Error: ', error%to_chars()
     else
-        write(*,*)  'Got back: ', i
+        write(*,*)  'Got back: ', res
     end if
 end program

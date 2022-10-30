@@ -16,12 +16,16 @@ source of the error.
 This process is time consuming and mistakes lead to inaccurate information and
 annoyance while debugging.
 
-The fortran error-handling library makes this process much easier by providing a type,
-`error_t`, to indicate if a procedure invocation has failed.
+The error-handling library provides a solution for error handling in Fortran code.
+It is primarily targeted towards development of Fortran based applications, but
+could be used in library code as well.
+
+At its core is the abstract type `error_t` which is used to indicate if a procedure
+invocation has failed.
 Errors can be handled gracefully and context can be added while returning up
 the call stack.
-It is also possible to programmatically identify and handle certain types or errors
-without terminating the application.
+It is also possible to make code where errors can be identified and handled programmatically
+by extending the `error_t` base class.
 
 But perhaps most interesting is the ability to generate stacktraces along with any
 error when combined with the https://github.com/SINTEF/fortran-stacktrace[fortran-stacktrace]
@@ -38,13 +42,13 @@ with access to the source code itself.
 == Quick Start
 
 All functionality is located in the link:src/error_handling.f90[`error_handling`] module.
-When writing a subroutine that might fail, add an `type(error_t), allocatable` argument,
-for example:
+When writing a subroutine that might fail, add an `class(error_t), allocatable` argument.
+Use the `fail` function to create a general error with a given message, for example:
 
 [source,fortran]
 ----
 module sqrt_inplace_mod
-    use error_handling, only: error_t
+    use error_handling, only: error_t, fail
     implicit none
 
     private
@@ -54,10 +58,10 @@ contains
 
     pure subroutine sqrt_inplace(x, error)
         real, intent(inout) :: x
-        type(error_t), allocatable, intent(inout) :: error
+        class(error_t), allocatable, intent(inout) :: error
 
         if (x <= 0.0) then
-            error = error_t('x is negative')
+            error = fail('x is negative')
             return
         end if
         x = sqrt(x)
@@ -73,12 +77,12 @@ Then use your newly created routines:
 
 [source,fortran,indent=0]
 ----
-        use error_handling, only: error_t, set_error_hook
+        use error_handling, only: error_t
         use sqrt_inplace_mod, only: sqrt_inplace
         implicit none
 
         real :: x
-        type(error_t), allocatable :: error
+        class(error_t), allocatable :: error
 
         ! Here we are using a labelled block to separate multiple fallible
         ! procedure calls from the code that handles any error
@@ -100,7 +104,7 @@ Then use your newly created routines:
             return
         end block fallible
         ! If we're here then an error has happened!
-        write(*, '(a)') error%display()
+        write(*, '(a,a)') 'Error: ', error%to_chars()
 ----
 
 === Generating Stacktraces
@@ -122,7 +126,7 @@ https://github.com/cpm-cmake/CPM.cmake/[CMake Package Manager (CPM)]:
 
 [source,cmake]
 ----
-CPMAddPackage("https://github.com/SINTEF/fortran-error-handling.git@0.1.0")
+CPMAddPackage("https://github.com/SINTEF/fortran-error-handling.git@0.2.0")
 target_link_libraries(<your target> error-handling)
 ----
 
@@ -156,19 +160,15 @@ In your Fortran Package Manager `fpm.toml` configuration file, add this repo as 
 
 ```toml
 [dependencies]
-error-handling = { git = "https://github.com/SINTEF/fortran-error-handling.git", tag = "v0.1.0" }
+error-handling = { git = "https://github.com/SINTEF/fortran-error-handling.git", tag = "v0.2.0" }
 ```
 
 == API Reference
 
-All functionality in this library can be accessed from the module `error_handling`.
-The modules directly under the `src/` folder contains specification and documentation
-of the different types and their procedures:
-
-* For type `error_t`, see link:src/error_handling_error.f90[]
-* For class `fail_reason_t`, see link:src/error_handling_fail_reason.f90[]
-* For types `error_hookt_t` and `error_handler_t`, see link:src/error_handling_hook.f90[]
-* For subroutine `error_stop`, see link:src/error_handling_error_stop.f90[]
+The abstract `error_t` class is declared in the link:src/error.f90[`error_mod`] module,
+but also available as a re-export from the `error_handling` module for convenience.
+The rest of the public API is available from the link:src/error_handling.f90[`error_handling`]
+module which also contains documentation for each type and procedure.
 
 
 == Usage
@@ -184,69 +184,35 @@ For users however, the stacktrace is hardly of any use at all.
 This is why it is important to gracefully unwind the application and provide some
 information about what caused the error so that users may take action themselves.
 
-The example below shows how the subroutine `with_cause` can be used to provide
+The example below shows how the subroutine `wrap_error` can be used to provide
 contextual information in the event of an error.
 In fact this information will be very useful for a developer as well since the stacktrace
-from a successful invocation of `add_bounded` looks exactly the same as the one that fails.
+from a successful invocation of `accumulate_and_check` looks exactly the same as
+the one that fails.
 
 
 [source,fortran]
 ----
-module bounded_mod
-    use error_handling, only: error_t
+module processing_mod
+    use error_handling, only: error_t, wrap_error, fail
     implicit none
 
 contains
 
-    pure subroutine add_bounded(i, j, error)
-        integer, intent(inout) :: i
-        integer, intent(in) :: j
-        type(error_t), allocatable, intent(inout) :: error
+    pure subroutine process_array(arr, res, error)
+        integer, intent(inout) :: arr(:)
+        integer, intent(out) :: res
+        class(error_t), allocatable, intent(inout) :: error
 
-        if (i > 25) then
-            error = error_t('i is too large')
-            return
-        end if
-        i = i + j
-    end subroutine
-
-
-    pure subroutine multiply_bounded(i, j, error)
-        integer, intent(inout) :: i
-        integer, intent(in) :: j
-        type(error_t), allocatable, intent(inout) :: error
-
-        if (i > 25) then
-            error = error_t('i is too large')
-            return
-        end if
-        i = i * j
-    end subroutine
-
-end module
-
-
-module some_mod
-    use bounded_mod, only: add_bounded, multiply_bounded
-    use error_handling, only: error_t
-    implicit none
-
-contains
-
-    pure subroutine do_something(i, error)
-        integer, intent(inout) :: i
-        type(error_t), allocatable, intent(inout) :: error
-
-        integer :: j
-        character(len=20) :: i_value, j_value
+        integer :: i
+        character(len=20) :: i_value
 
         ! Here we are using a block to separate multiple fallible procedure calls
         ! from the code that handles any error
+        res = 0
         fallible: block
-            do j = 1, 5
-                call add_bounded(i, j + 2, error)
-                if (allocated(error)) exit fallible
-                call multiply_bounded(i, j, error)
+            do i = 1, size(arr)
+                call accumulate_and_check(arr(i), res, error)
                 if (allocated(error)) exit fallible
             end do
             ! Return for subroutine on success, code below is only for
@@ -255,32 +221,56 @@ contains
         end block fallible
         ! Provide some context with error
         write(i_value, *) i
-        write(j_value, *) j
-        call error%with_cause('Could not do some thing with i = '    &
-            // trim(adjustl(i_value)) // ' and j = ' // trim(adjustl(j_value)))
+        call wrap_error(error, 'Processing of array failed at element '    &
+            // trim(adjustl(i_value)))
     end subroutine
+
+
+    pure subroutine accumulate_and_check(i, res, error)
+        integer, intent(in) :: i
+        integer, intent(inout) :: res
+        class(error_t), allocatable, intent(inout) :: error
+
+        if (res > 50) then
+            error = fail('Magic limit reached')
+            return
+        end if
+        res = res + i
+    end subroutine
+
 end module
 
 
 program basic_example
-    use error_handling, only: error_t
-    use some_mod, only: do_something
+    use error_handling, only: error_t, wrap_error
+    use processing_mod, only: process_array
     implicit none
-    integer :: i
-    type(error_t), allocatable :: error
 
-    i = 10
-    call do_something(i, error)
+    integer :: res
+    integer, allocatable :: arr(:)
+    class(error_t), allocatable :: error
+
+    arr = [1, 2, 3, 5, 8, 12, 11, 20, 5, 2, 4, 6]
+    call process_array(arr, res, error)
     if (allocated(error)) then
-        call error%with_cause('Example failed (but that was the intent...)')
-        write(*,'(a)') error%display()
+        call wrap_error(error, 'Example failed (but that was the intent...)')
+        write(*,'(a,a)') 'Error: ', error%to_chars()
     else
-        write(*,*)  'Got back: ', i
+        write(*,*)  'Got back: ', res
     end if
 end program
 ----
 
-This will produce the output shown in the screenshot on the top of this page.
+This will produce an error message that is quite readable even for those not familiar
+with the source code:
+
+```
+Error: Example failed (but that was the intent...)
+
+Caused by:
+  - Processing of array failed at element 9
+  - Magic limit reached
+```
 
 === Pure Functions
 
@@ -320,7 +310,7 @@ provide such result types for some primitive data types. Example:
 ----
 use iso_fortran_env, only: dp => real64
 use error_handling_experimental_result, only: result_real_dp_rank1_t
-use error_handling, only: error_t
+use error_handling, only: fail
 
 ! (...)
 
@@ -330,7 +320,7 @@ type(result_real_dp_rank1_t) pure function func(x) result(y)
     if (x >= 0) then
         y = x * [1.0, 2.0, 3.0]
     else
-        y = error_t('x must be positive')
+        y = fail('x must be positive')
     end if
 end function
 ----
@@ -349,11 +339,6 @@ else
 end if
 ----
 
-WARNING: There seems to be a bug in gfortran with finalization when a types
-    assignment operator is overloaded like we do here.
-    If you use or plan to support gfortran you currently need to assign
-    errors like this: `y%error = error_t('...')` or your program will crash!
-
 WARNING: This is currently an experimental feature. Expect breaking changes in the
     future.
 
@@ -364,20 +349,35 @@ for example in order to continue execution.
 If you're developing a library for others to use it is good practice to do so
 as you don't know how users may wish to use your library.
 
-The `error_t` type can be constructed with a custom type extending
-`fail_reason_t`. This can later be detected with a `select type` block:
+In these situations, make your own type(s) that extend `error_t`. Checking for
+this specific error can the be done using a `select type` statement:
 
 [source,fortran]
 ----
-type(error_t), allocatable :: error
+class(error_t), allocatable :: error
 ! (...)
-select type (reason => error%root_cause)
-    type is (special_fail_reason_t)
-        ! Add code here to gracefully handle an failure reason of type special_fail_reason_t
+select type (error)
+    type is (my_error_t)
+        ! Add code here to gracefully handle an error of type my_error_t
 end select
 ----
 
-For a complete example, see link:example/fail-reason.f90[`fail-reason.f90`].
+Note that due to limitations in the Fortran standard
+(see link:https://github.com/j3-fortran/fortran_proposals/issues/242[#242])
+you should still have subroutines take a `class(error_t)` argument and not
+a `type(my_error_t)` argument.
+If you use a `type(my_error_t)` and any caller just want to pass errors
+back up the call stack then they need to add much boilerplate code to convert the
+`type(my_error_t)` variable into a `class(error_t)`.
+Instead, use an argument `class(error_t)` and clearly state the possible error types
+that might be returned in the documentation.
+
+It is also worth noting that any custom error handler (e.g. for stacktrace generation)
+will not be attached to the custom error type.
+This will first happen when the error is stored in the general error report type by
+either the `fail` function or the `wrap_error` subroutine.
+
+For a complete example, see link:example/custom-error-type.f90[`custom-error-type.f90`].
 
 == Design
 
@@ -409,24 +409,10 @@ Why is a second library required for stacktrace generation?::
 
 The stacktrace generation code requires some additional dependencies, namely a
 C++ compiler, some Win32 API calls on Windows and libbfd on Linux.
-By keeping this library pure Fortran with no additional dependencies it is very easy
-to use it for error handling in other libraries.
-This means that you (as the library developer) don't impose additional dependencies
-to your users that they might not want to use.
-Stacktrace generation may be desirable in a standalone application, but if the Fortran
-code is to be embedded in for example a Python library this might not be desirable.
-The separation means that this library and libraries depending on it will be relevant
-in both scenarios.
-
-Why isn't `error_t` itself abstract, instead of `fail_reason_t`?::
-
-One could imagine that subroutines could take a `class(my_error_t), allocatable`
-where `my_error_t` extends `error_t` to enable checking for specific errors.
-While testing this approach I encountered way too may compiler bugs
-to bother carrying on with it.
-Also, the Fortran standard unfortunately makes using such a design very clumsy.
-See https://github.com/j3-fortran/fortran_proposals/issues/242[this proposal] for
-further details.
+For complex project this might not be a big deal, but smaller projects it could be
+advantageous to have a simple pure Fortran library instead.
+Also, the error context generation using `wrap_error` is very useful by itself, even
+without code to generate a stacktrace along with it.
 
 
 == License and Copyright

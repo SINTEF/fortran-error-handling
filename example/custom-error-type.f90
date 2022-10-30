@@ -1,36 +1,36 @@
 module better_sqrt_inplace_mod
-    use error_handling, only: error_t, fail_reason_t
+    use error_handling, only: error_t
     implicit none
 
     private
     public sqrt_inplace
-    public negative_value_failure_t
+    public negative_value_error_t
 
-    type, extends(fail_reason_t) :: negative_value_failure_t
+    type, extends(error_t) :: negative_value_error_t
     contains
-        procedure :: describe
+        procedure :: to_chars
     end type
 
 contains
 
 
-    pure function describe(this)
-        class(negative_value_failure_t), intent(in) :: this
-        character(len=:), allocatable :: describe
+    pure function to_chars(this) result(chars)
+        class(negative_value_error_t), intent(in) :: this
+        character(len=:), allocatable :: chars
 
-        describe = 'x is negative'
+        chars = 'x is negative'
         ! The unused argument `this` is intentional, the trick below
-        ! avoids compilers to emit a warning about it.
+        ! avoid compilers emitting a warning about it.
         associate(dummy => this); end associate
     end function
 
 
     pure subroutine sqrt_inplace(x, error)
         real, intent(inout) :: x
-        type(error_t), allocatable, intent(inout) :: error
+        class(error_t), allocatable, intent(inout) :: error
 
         if (x <= 0.0) then
-            error = error_t(negative_value_failure_t())
+            error = negative_value_error_t()
             return
         end if
         x = sqrt(x)
@@ -39,13 +39,13 @@ contains
 end module
 
 
-program custom_error_cause
+program custom_error_type
     use error_handling, only: error_t, error_stop
-    use better_sqrt_inplace_mod, only: sqrt_inplace, negative_value_failure_t
+    use better_sqrt_inplace_mod, only: sqrt_inplace, negative_value_error_t
     implicit none
 
     real :: x
-    type(error_t), allocatable :: error
+    class(error_t), allocatable :: error
 
     fallible: block
         x = -20.0
@@ -58,15 +58,15 @@ program custom_error_cause
         stop
     end block fallible
     ! If we're here then an error has happened!
-    select type (reason => error%root_cause)
+    select type (error)
         ! Check if it's an error we know how to handle
-        type is (negative_value_failure_t)
+        type is (negative_value_error_t)
             ! We know better!
             block
                 ! Notice that the variable `error` here masks error from the parent
                 ! scope. This is intentional as `error`in the parent scope is
                 ! already assigned to a value.
-                type(error_t), allocatable :: error
+                class(error_t), allocatable :: error
 
                 x = - x
                 call sqrt_inplace(x, error)

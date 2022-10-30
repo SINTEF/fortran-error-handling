@@ -1,6 +1,6 @@
 {
     "name": "error-handling",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "languages": ["Fortran"],
     "linker_language": "Fortran",
     "release_dbg_info": true,
