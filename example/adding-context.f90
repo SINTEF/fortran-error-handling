@@ -12,12 +12,12 @@ contains
         integer :: i
         character(len=20) :: i_value
 
-        ! Here we are using a block to separate multiple fallible procedure calls
-        ! from the code that handles any error
+        ! Here we use a labelled block to separate multiple fallible procedure calls
+        ! from the code that handles any errors
         res = 0
         fallible: block
             do i = 1, size(arr)
-                call accumulate_and_check(arr(i), res, error)
+                call check_and_accumulate(arr(i), res, error)
                 if (allocated(error)) exit fallible
             end do
             ! Return for subroutine on success, code below is only for
@@ -31,7 +31,7 @@ contains
     end subroutine
 
 
-    pure subroutine accumulate_and_check(i, res, error)
+    pure subroutine check_and_accumulate(i, res, error)
         integer, intent(in) :: i
         integer, intent(inout) :: res
         class(error_t), allocatable, intent(inout) :: error

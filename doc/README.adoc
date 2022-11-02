@@ -302,6 +302,9 @@ advantageous to have a simple pure Fortran library instead.
 Also, the error context generation using `wrap_error` is very useful by itself, even
 without code to generate a stacktrace along with it.
 
+== Contributions
+
+Feel free to submit Feedback, suggestions or any problems in the issue tracker.
 
 == License and Copyright
 

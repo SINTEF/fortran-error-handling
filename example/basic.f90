@@ -40,8 +40,8 @@ contains
         real :: x
         class(error_t), allocatable :: error
 
-        ! Here we are using a labelled block to separate multiple fallible
-        ! procedure calls from the code that handles any error
+        ! Here we use a labelled block to separate multiple fallible
+        ! procedure calls from the code that handles any errors
         fallible: block
             write(*,*) 'computing square root...'
             x = 20.0
