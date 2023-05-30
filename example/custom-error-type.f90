@@ -63,15 +63,12 @@ program custom_error_type
         type is (negative_value_error_t)
             ! We know better!
             block
-                ! Notice that the variable `error` here masks error from the parent
-                ! scope. This is intentional as `error`in the parent scope is
-                ! already assigned to a value.
-                class(error_t), allocatable :: error
+                class(error_t), allocatable :: error2
 
                 x = - x
-                call sqrt_inplace(x, error)
+                call sqrt_inplace(x, error2)
                 ! If this fails we're out of luck...
-                if (allocated(error)) call error_stop(error)
+                if (allocated(error2)) call error_stop(error2)
                 write(*,*) 'sqrt = ', x, ' * i'
             end block
         class default

@@ -48,7 +48,6 @@ contains
     pure module function fail_error(cause) result(error)
         class(error_t), intent(in) :: cause
         type(error_report_t) :: error
-        ! class(error_t), allocatable :: error
 
         ! If incoming error is an error_report_t just return it, otherwise
         ! wrap it inside one
@@ -64,9 +63,12 @@ contains
     pure module function fail_message(message) result(error)
         character(len=*), intent(in) :: message
         type(error_report_t) :: error
-        ! class(error_t), allocatable :: error
 
-        error = do_fail(message_error_t(message))
+        type(message_error_t) :: the_error
+
+        the_error%message = message
+        error = do_fail(the_error)
+        ! error = do_fail(message_error_t(message))
     end function
 
 
@@ -143,7 +145,9 @@ contains
             call move_alloc(chain, tmp)
             allocate(chain)
             chain%error = error
+#ifndef __NVCOMPILER
             call move_alloc(tmp, chain%cause)
+#endif
         end if
     end subroutine
 
@@ -185,12 +189,14 @@ contains
         end associate
 
         chars = chain%error%to_chars()
+#ifndef __NVCOMPILER
         if (allocated(chain%cause)) then
             chars = chars // new_line('c') &
                 // new_line('c') &
                 // 'Caused by:' // new_line('c') &
                 // chain_to_chars(chain%cause)
         end if
+#endif
     end function
 
 
@@ -199,11 +205,13 @@ contains
         character(len=:), allocatable :: chars
 
         chars = '  - ' // indent_newlines(chain%error%to_chars(), 4)
+#ifndef __NVCOMPILER
         if (.not. allocated(chain%cause)) then
             return
         end if
         chars = chars // new_line('c') &
             // chain_to_chars(chain%cause)
+#endif
     end function
 
 
@@ -228,7 +236,11 @@ contains
         class(message_error_t), intent(in) :: this
         character(len=:), allocatable :: chars
 
-        chars = this%message
+        if (allocated(this%message)) then
+            chars = this%message
+        else
+            chars = ''
+        end if
     end function
 
 end submodule
