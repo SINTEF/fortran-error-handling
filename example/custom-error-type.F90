@@ -1,3 +1,5 @@
+#ifndef __NVCOMPILER
+! This example segfaults on some NVidia compilers for some reason
 module better_sqrt_inplace_mod
     use error_handling, only: error_t
     implicit none
@@ -76,3 +78,18 @@ program custom_error_type
             call error_stop(error)
     end select
 end program
+
+#else
+
+program custom_Error_type
+    implicit none
+
+    write(*, '(a)') 'This example does not run on NVidia Fortran'
+end program
+
+! CMake gets confused if a module is excluded during preprocessing
+module better_sqrt_inplace_mod
+    implicit none
+end module
+
+#endif
