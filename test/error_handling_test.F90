@@ -27,7 +27,10 @@ contains
         write(*,*) 'test_error_handling...'
         call pure_sub_with_error_works
         call impure_sub_with_error_works
-        call pure_func_with_error_works
+#       ifndef __GFORTRAN__
+            ! gfortran 13.2.0 segfaults on this. TODO: Report in gcc bug tracker
+            call pure_func_with_error_works
+#       endif
         call fail_and_wrap_error_should_produce_error_report
         call wrap_error_should_be_visible_in_output
         call uninitialized_error_report_should_not_carsh
