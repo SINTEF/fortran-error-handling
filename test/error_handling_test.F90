@@ -4,7 +4,12 @@ module error_handling_test
         fail, &
         wrap_error, &
         error_report_t, &
-        error_stop
+        error_chain_t, &
+        error_stop, &
+        error_handler_t, &
+        error_hook_t, &
+        set_error_hook, &
+        remove_error_hook
 
     implicit none
     private
@@ -16,9 +21,19 @@ module error_handling_test
         procedure :: to_chars => my_error_to_chars
     end type
 
-    !TODO:
-    ! - Test error_t (extend type, check against breaking API)
-    ! - Test error handler (check that it's called)
+
+    type, extends(error_hook_t) :: custom_error_hook_t
+    contains
+        procedure :: create_handler
+    end type
+
+
+    character(len=29), parameter :: CUSTOM_MESSAGE = 'Formatted with custom handler'
+
+    type, extends(error_handler_t) :: custom_error_handler_t
+    contains
+        procedure :: format_error
+    end type
 
 contains
 
@@ -35,6 +50,13 @@ contains
         call wrap_error_should_be_visible_in_output
         call uninitialized_error_report_should_not_carsh
         call fail_on_error_report_should_not_add_new_layer
+        call fail_should_use_custom_handler
+#       ifndef __GFORTRAN__
+            ! gfortran 13.2.0 give
+            !     malloc(): unaligned tcache chunk detected
+            ! on this test. Code bug? Compiler bug?
+            call wrap_error_should_use_cusom_handler
+#       endif
         write(*,*) 'test_error_handling [Ok]'
     end subroutine
 
@@ -130,6 +152,7 @@ contains
         if (chars /= '<UNKNOWN ERROR>') call error_stop('Unexpected chars: ' // chars)
     end subroutine
 
+
     subroutine fail_on_error_report_should_not_add_new_layer
         class(error_t), allocatable :: error1, error2
 
@@ -137,6 +160,62 @@ contains
         error2 = fail(error1)
         if (error1%to_chars() /= error2%to_chars()) call error_stop('Not expected')
     end subroutine
+
+
+    subroutine fail_should_use_custom_handler
+        class(error_t), allocatable :: error
+
+        call set_error_hook(custom_error_hook_t())
+        error = fail('foo')
+        select type(error)
+            class is (error_report_t)
+                if (.not. same_type_as(error%handler, custom_error_handler_t())) error stop 'Unexpected handler'
+            class default
+                error stop 'Unexpected error'
+        end select
+
+        call remove_error_hook()
+        error = fail('bar')
+        select type(error)
+            class is (error_report_t)
+                if (same_type_as(error%handler, custom_error_handler_t())) error stop 'Unexpected handler'
+            class default
+                error stop 'Unexpected error'
+        end select
+    end subroutine
+
+
+    subroutine wrap_error_should_use_cusom_handler
+        class(error_t), allocatable :: error
+
+        call set_error_hook(custom_error_hook_t())
+        error = my_error_t()
+        call wrap_error(error, 'foo')
+        select type(error)
+            class is (error_report_t)
+                if (.not. same_type_as(error%handler, custom_error_handler_t())) error stop 'Unexpected handler'
+            class default
+                error stop 'Unexpected error'
+        end select
+        call remove_error_hook()
+    end subroutine
+
+    pure function create_handler(this, error) result(handler)
+        class(custom_error_hook_t), intent(in) :: this
+        class(error_t), intent(in) :: error
+        class(error_handler_t), allocatable :: handler
+
+        handler = custom_error_handler_t()
+    end function
+
+
+    pure function format_error(this, chain) result(chars)
+        class(custom_error_handler_t), intent(in) :: this
+        type(error_chain_t), intent(in) :: chain
+        character(len=:), allocatable :: chars
+
+        chars = 'Custom error handler'
+    end function
 
 
     pure function pure_func_with_error() result(error)

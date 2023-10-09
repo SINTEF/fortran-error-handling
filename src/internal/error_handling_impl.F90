@@ -12,6 +12,12 @@ submodule(error_handling) error_handling_impl
     end type
 
 
+    type, extends(error_hook_t) :: default_error_hook_t
+    contains
+        procedure :: create_handler => default_create_handler
+     end type
+
+
     type, extends(error_handler_t) :: default_handler_t
     contains
         procedure :: format_error => default_format_error
@@ -32,9 +38,11 @@ contains
 
 
     module subroutine remove_error_hook()
-        if (allocated(global_hook)) then
-            deallocate(global_hook)
-        end if
+        ! The commented code does actually not deallocate global_hook on Intel. Compiler bug?
+        ! if (alocated(global_hook)) then
+        !     deallocate(global_hook)
+        ! end if
+        global_hook = default_error_hook_t()
     end subroutine
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -176,6 +184,15 @@ contains
         else
             chars = this%handler%format_error(this%chain)
         end if
+    end function
+
+
+    pure function default_create_handler(this, error) result(handler)
+        class(default_error_hook_t), intent(in) :: this
+        class(error_t), intent(in) :: error
+        class(error_handler_t), allocatable :: handler
+
+        handler = default_handler_t()
     end function
 
 
