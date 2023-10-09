@@ -1,0 +1,11 @@
+variables:
+  # Configuration of which OS/compiler combinations should be used
+  # Note: Enabled options must explicitly be set to the exact string "On".
+  BUILD_INTEL_WINDOWS: "On"
+  BUILD_INTEL_LINUX: "On"
+  BUILD_NVIDIA_LINUX: "On"
+  BUILD_LINUX_GCC: "On"
+  # Perform code coverage with Intel compiler? To enable, set to the exact string "On"
+  INTEL_CODE_COVERAGE: "On"
+
+include: .gitlab-ci-fortran-lib.yml

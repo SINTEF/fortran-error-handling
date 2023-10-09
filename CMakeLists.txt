@@ -1,4 +1,4 @@
-# "template": { "id": "dcmt", "version": 0.9.0 }
+# "template": { "id": "dcmt", "version": 0.17.0 }
 ################################################################################
 ################################################################################
 # CMake Project Template                                                       #
@@ -8,6 +8,14 @@
 ################################################################################
 ################################################################################
 cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+# Check if project is a "local" project or not. Local projects are those projects
+# who either is the root project or a project added with the "path" dependency syntax
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    set(DCMT_LOCAL_PROJECT True)
+elseif(NOT DEFINED DCMT_LOCAL_PROJECT)
+    set(DCMT_LOCAL_PROJECT False)
+endif()
 
 ################################################################################
 # Read project JSON                                                            #
@@ -54,6 +62,7 @@ if(NOT err)
                 GET ${project_json} "c++std")
             if(err)
                 message(WARNING "Language C++ is enabled for project ${project_name}, but 'c++std' is not set. It is reccomended to specify 'c++std' in cmake-project.jsonc")
+                unset(cxx_std)
             endif()
         endif()
     endforeach()
@@ -61,34 +70,62 @@ endif()
 
 # Linker language specification
 string(JSON linker_language ERROR_VARIABLE err
-    GET ${project_json} "linker_language")
+    GET ${project_json} "linker-language")
 
 # Add debug info to release builds? (for stacktrace generation)
 string(JSON release_dbg_info ERROR_VARIABLE err
-    GET ${project_json} "release_dbg_info")
+    GET ${project_json} "release-dbg-info")
 if(err)
     set(release_dbg_info False)
 endif()
 
-################################################################################
-# Root project configuration                                                   #
-################################################################################
-if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-    # This value will only be propagated to path dependencies so that CPM dependencies
-    # using this template can disable tests
-    set(is_local True)
+# Library type (default: static)
+string(JSON libtype ERROR_VARIABLE err
+    GET ${project_json} "lib-type")
+if(err)
+    set(libtype STATIC)
 else()
-    set(is_local False)
+    string(TOUPPER "${libtype}" libtype)
+endif()
+
+# Settings only relevant if this is main project
+if (NOT DEFINED DCMT_STATIC_RUNTIME)
+    set(DCMT_STATIC_RUNTIME False)
+endif()
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    # Compiler runtime libraries (static/dynamic)
+    string(JSON runtime ERROR_VARIABLE err
+        GET ${project_json} "runtime")
+    if(err)
+        set(runtime "dynamic")
+    endif()
+    if (runtime STREQUAL "dynamic")
+        set(DCMT_STATIC_RUNTIME False)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    elseif(runtime STREQUAL "static")
+        set(DCMT_STATIC_RUNTIME True)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    else()
+        message(FATAL_ERROR "Unsupported choice for option 'runtime'. Legal values: static, dynamic")
+    endif()
 endif()
 
 ################################################################################
 # Compiler flags for this project                                              #
 ################################################################################
+# Directory to store code coverage data, if enabled
+set(codecov_dir "${CMAKE_BINARY_DIR}/code-coverage")
 # Any dependency that does not specify compiler flags themselves will also get
 # these flags. Presumably that increases chances for compatibility...
 # Fortran compiler
+# Link flags for executables and shared libraries built in this project
+set(link_flags "")
 if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(debug_info_flags "-g")
+    set(fortran_codecov_flags "--coverage -fprofile-abs-path -fprofile-dir=${codecov_dir}")
+    if (DCMT_STATIC_RUNTIME)
+        list(APPEND link_flags -static-libgfortran -static-libgcc)
+    endif()
     # Gfortran's maybe-uninitialized warnings are wildly inaccurate for character
     # strings and thus disabled.
     set(CMAKE_Fortran_FLAGS
@@ -96,84 +133,170 @@ if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(CMAKE_Fortran_FLAGS_DEBUG "-fcheck=bounds -fcheck=array-temps")
     set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -funroll-loops")
     set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "${CMAKE_Fortran_FLAGS_RELEASE}")
+    set(CMAKE_Fortran_FLAGS_RELWITHCHECKS "${CMAKE_Fortran_FLAGS_RELEASE} -fcheck=bounds -fcheck=array-temps")
 elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+    # Note: This matches both Intel (classic) and IntelLLVM
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "Intel")
+        # IntelLLVM does not support code coverage yet
+        if (WIN32)
+            set(fortran_codecov_flags "-Qprof-gen:srcpos -Qprof-dir:${codecov_dir}")
+        else()
+            set(fortran_codecov_flags "-prof-gen:srcpos -prof-dir:${codecov_dir}")
+        endif()
+    endif()
     if(WIN32)
         set(debug_info_flags "-Z7")
         set(CMAKE_Fortran_FLAGS
-            "-nologo -libs:dll -threads -traceback -fp:precise -align:all -standard-semantics -error-limit:1 -warn:all -nogen-interfaces -Qdiag-disable:5462")
-        set(CMAKE_Fortran_FLAGS_DEBUG "-Od -debug:all -dbglibs -check:all -fpe-all:0")
+            "-nologo -libs:dll -threads -traceback -fp:precise -align:all -error-limit:1 -warn:all -nogen-interfaces -Qdiag-disable:5462")
+        set(CMAKE_Fortran_FLAGS_DEBUG "-Od -debug:all -dbglibs -check:all")
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
         set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "${CMAKE_Fortran_FLAGS_RELEASE} -debug:all")
-    else(WIN32)
+        # check stack is disabled as its precense disables optimization
+        set(CMAKE_Fortran_FLAGS_RELWITHCHECKS "${CMAKE_Fortran_FLAGS_RELEASE} -check:all -check:nostack -check:noarg_temp_created -fpe:0")
+    else()
+        if (DCMT_STATIC_RUNTIME)
+            list(APPEND link_flags -static-intel -static-libgcc)
+        endif()
         set(debug_info_flags "-g")
         set(CMAKE_Fortran_FLAGS
-            "-nologo -fPIC -threads -traceback -align all -fp-model precise -pc64 -standard-semantics -error-limit 1 -nogen-interfaces -diag-disable:5462")
-        set(CMAKE_Fortran_FLAGS_DEBUG "-O0 -debug -check all -fpe-all=0")
+            "-nologo -fPIC -threads -traceback -align all -fp-model precise -pc64 -error-limit 1 -nogen-interfaces -diag-disable:5462")
+        set(CMAKE_Fortran_FLAGS_DEBUG "-O0 -debug -check all")
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
         set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "${CMAKE_Fortran_FLAGS_RELEASE} -debug")
-    endif(WIN32)
+        # check stack is disabled as its precense disables optimization
+        set(CMAKE_Fortran_FLAGS_RELWITHCHECKS "${CMAKE_Fortran_FLAGS_RELEASE} -check all -check nostack -check noarg_temp_created -fpe=0")
+    endif()
 endif()
 # Set debug info flags for Fortran
 set(CMAKE_Fortran_FLAGS_DEBUG "${debug_info_flags} ${CMAKE_Fortran_FLAGS_DEBUG}")
 set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "${debug_info_flags} ${CMAKE_Fortran_FLAGS_RELWITHDEBINFO}")
+set(CMAKE_Fortran_FLAGS_RELWITHCHECKS "${debug_info_flags} ${CMAKE_Fortran_FLAGS_RELWITHCHECKS}")
 if(release_dbg_info)
     set(CMAKE_Fortran_FLAGS_RELEASE "${debug_info_flags} ${CMAKE_Fortran_FLAGS_RELEASE}")
 endif()
 
 # C compiler flags
 if(CMAKE_C_COMPILER_ID MATCHES "MSVC")
+    # TODO: Code coverage flags
     set(debug_info_flags "-Z7")
     set(CMAKE_C_FLAGS "")
-    set(CMAKE_C_FLAGS_RELEASE "-MD -O2")
-    set(CMAKE_C_FLAGS_DEBUG "-MDd -Od")
+    set(CMAKE_C_FLAGS_RELEASE "-O2")
+    set(CMAKE_C_FLAGS_DEBUG "-Od")
     if(release_dbg_info)
         set(CMAKE_EXE_LINKER_FLAGS "-debug")
     endif()
 elseif(CMAKE_C_COMPILER_ID MATCHES "GNU")
+    set(c_codecov_flags "--coverage -fprofile-abs-path -fprofile-dir=${codecov_dir}")
     set(debug_info_flags "-g")
-    set(CMAKE_C_FLAGS "-fPIC")
+    set(CMAKE_C_FLAGS "-fPIC -Wall -fmax-errors=1")
     set(CMAKE_C_FLAGS_RELEASE "-O2")
     set(CMAKE_C_FLAGS_DEBUG "-Og")
+    if (DCMT_STATIC_RUNTIME)
+        list(APPEND link_flags -static-libgcc)
+    endif()
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    # TODO: Code coverage flags
+    if(WIN32)
+        set(debug_info_flags "-g")
+        set(CMAKE_C_FLAGS "-Wall -ferror-limit=1")
+        set(CMAKE_C_FLAGS_RELEASE "-O2")
+        set(CMAKE_C_FLAGS_DEBUG "-Og")
+        if(release_dbg_info)
+            set(CMAKE_EXE_LINKER_FLAGS "-debug")
+        endif()
+    else()
+        set(debug_info_flags "-g")
+        set(CMAKE_C_FLAGS "-fPIC -Wall -ferror-limit=1")
+        set(CMAKE_C_FLAGS_RELEASE "-O2")
+        set(CMAKE_C_FLAGS_DEBUG "-Og")
+    endif()
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELEASE}")
 elseif(CMAKE_C_COMPILER_ID MATCHES "Intel")
+    # Note: This matches both Intel (classic) and IntelLLVM
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "Intel")
+        # IntelLLVM does not support code coverage yet
+        if (WIN32)
+            set(c_codecov_flags "-Qprof-gen:srcpos -Qprof-dir:${codecov_dir}")
+        else()
+            set(c_codecov_flags "-prof-gen:srcpos -prof-dir:${codecov_dir}")
+        endif()
+    endif()
     if(WIN32)
         set(debug_info_flags "-Z7")
         set(CMAKE_C_FLAGS "")
         set(CMAKE_C_FLAGS_RELEASE "-MD -O2")
         set(CMAKE_C_FLAGS_DEBUG "-MDd -Od")
         if(release_dbg_info)
-            set(CMAKE_EXE_LINKER_FLAGS "-debug")
+            list(APPEND link_flags "-debug")
         endif()
     else()
         set(debug_info_flags "-g")
         set(CMAKE_C_FLAGS "-fPIC")
         set(CMAKE_C_FLAGS_RELEASE "-O2")
         set(CMAKE_C_FLAGS_DEBUG "-O0")
+        if (DCMT_STATIC_RUNTIME)
+            list(APPEND link_flags -static-libgcc)
+        endif()
     endif()
 endif()
+# Runtime checks are currently set for Fortran code only
+set(CMAKE_C_FLAGS_RELWITHCHECKS "")
 # Set debug info flags for C
 set(CMAKE_C_FLAGS_DEBUG "${debug_info_flags} ${CMAKE_C_FLAGS_DEBUG}")
 set(CMAKE_C_FLAGS_RELWITHDEBINFO "${debug_info_flags} ${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+set(CMAKE_C_FLAGS_RELWITHCHECKS "${debug_info_flags} ${CMAKE_C_FLAGS_RELWITHCHECKS}")
 if(release_dbg_info)
     set(CMAKE_C_FLAGS_RELEASE "${debug_info_flags} ${CMAKE_C_FLAGS_RELEASE}")
 endif()
 
 # C++ compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    # TODO: Code coverage flags
     set(debug_info_flags "-Z7")
     set(CMAKE_CXX_FLAGS "-EHsc")
-    set(CMAKE_CXX_FLAGS_RELEASE "-MD -O2")
-    set(CMAKE_CXX_FLAGS_DEBUG "-MDd -Od")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2")
+    set(CMAKE_CXX_FLAGS_DEBUG "-Od")
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE}")
     if(release_dbg_info)
         set(CMAKE_EXE_LINKER_FLAGS "-debug")
     endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     set(debug_info_flags "-g")
-    set(CMAKE_CXX_FLAGS "-fPIC")
+    set(cxx_codecov_flags "--coverage -fprofile-abs-path -fprofile-dir=${codecov_dir}")
+    set(CMAKE_CXX_FLAGS "-fPIC -Wall -fmax-errors=1")
     set(CMAKE_CXX_FLAGS_RELEASE "-O2")
     set(CMAKE_CXX_FLAGS_DEBUG "-Og")
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE}")
+    if (DCMT_STATIC_RUNTIME)
+        list(APPEND link_flags -static-libstdc++ -static-libgcc)
+    endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # TODO: Code coverage flags
+    if(WIN32)
+        set(debug_info_flags "-g")
+        set(CMAKE_C_FLAGS "-Wall -ferror-limit=1")
+        set(CMAKE_C_FLAGS_RELEASE "-O2")
+        set(CMAKE_C_FLAGS_DEBUG "-Og")
+        if(release_dbg_info)
+            set(CMAKE_EXE_LINKER_FLAGS "-debug")
+        endif()
+    else()
+        set(debug_info_flags "-g")
+        set(CMAKE_C_FLAGS "-fPIC -Wall -ferror-limit=1")
+        set(CMAKE_C_FLAGS_RELEASE "-O2")
+        set(CMAKE_C_FLAGS_DEBUG "-Og")
+    endif()
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE}")
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+    # Note: This matches both Intel (classic) and IntelLLVM
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "Intel")
+        # IntelLLVM does not support code coverage yet
+        if (WIN32)
+            set(cxx_codecov_flags "-Qprof-gen:srcpos -Qprof-dir:${codecov_dir}")
+        else()
+            set(cxx_codecov_flags "-prof-gen:srcpos -prof-dir:${codecov_dir}")
+        endif()
+    endif()
     if(WIN32)
         set(debug_info_flags "-Z7")
         set(CMAKE_CXX_FLAGS "-Z7")
@@ -181,7 +304,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
         set(CMAKE_CXX_FLAGS_DEBUG "-MDd -Od")
         set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE}")
         if(release_dbg_info)
-            set(CMAKE_EXE_LINKER_FLAGS "-debug")
+            list(APPEND link_flags "-debug")
         endif()
     else()
         set(debug_info_flags "-g")
@@ -189,13 +312,27 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
         set(CMAKE_CXX_FLAGS_RELEASE "-O2")
         set(CMAKE_CXX_FLAGS_DEBUG "-O0")
         set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE}")
+        if (DCMT_STATIC_RUNTIME)
+            list(APPEND link_flags -static-libgcc -static-libstdc++)
+        endif()
     endif()
 endif()
+# Runtime checks are currently set for Fortran code only
+set(CMAKE_CXX_FLAGS_RELWITHCHECKS "")
 # Set debug info flags for C++
 set(CMAKE_CXX_FLAGS_DEBUG "${debug_info_flags} ${CMAKE_CXX_FLAGS_DEBUG}")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${debug_info_flags} ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+set(CMAKE_CXX_FLAGS_RELWITHCHECKS "${debug_info_flags} ${CMAKE_CXX_FLAGS_RELWITHCHECKS}")
 if(release_dbg_info)
     set(CMAKE_CXX_FLAGS_RELEASE "${debug_info_flags} ${CMAKE_CXX_FLAGS_RELEASE}")
+endif()
+
+# Optinally enable code coverage
+if(DCMT_LOCAL_PROJECT AND CODE_COVERAGE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${fortran_codecov_flags}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${c_codecov_flags}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${cxx_codecov_flags}")
+    file(MAKE_DIRECTORY ${codecov_dir})
 endif()
 
 ################################################################################
@@ -242,10 +379,13 @@ macro(parse_dependency json i target_list)
     unset(dep_tag)
     unset(dep_path)
     unset(dep_target)
+    unset(dep_include)
+    unset(dep_header_only)
 
     string(JSON dep_name ERROR_VARIABLE err
         MEMBER ${json} ${i})
     check_parse(${err})
+    # Determine dependency type (git, path or target)
     string(JSON dep_git ERROR_VARIABLE err
         GET ${json} ${dep_name} "git")
     if(err)
@@ -259,10 +399,20 @@ macro(parse_dependency json i target_list)
             endif()
         endif()
     endif()
+    # Check if dependency is header only
+    set(dep_header_only False)
+    string(JSON dep_include ERROR_VARIABLE err
+        GET ${json} ${dep_name} "include")
+    if(NOT err)
+        set(dep_header_only True)
+    endif()
 
     # If dependency uses this template, EXPECTED_PROJECT_NAME is used to verify that
     # dependency name is the same as project name
     set(EXPECTED_PROJECT_NAME "${dep_name}")
+    # Current value of DCMT_LOCAL_PROJECT which will be reset after dependency has
+    # been added
+    set(local_project_was ${DCMT_LOCAL_PROJECT})
     if(dep_git)
         string(JSON dep_version ERROR_VARIABLE err
             GET ${json} ${dep_name} "version")
@@ -275,28 +425,25 @@ macro(parse_dependency json i target_list)
             check_parse(${err})
         endif()
         ensure_cpm()
-        # Set is_local to False so that other projects using this template can
-        # disable tests
-        set(is_local_was ${is_local})
-        set(is_local False)
-        # This will probably need to be a bit more sophisticated in the future...
+        set(args
+            GIT_REPOSITORY ${dep_git}
+            VERSION ${dep_version}
+        )
         if (dep_tag)
-            CPMAddPackage(NAME ${dep_name}
-                GIT_REPOSITORY ${dep_git}
-                VERSION ${dep_version}
+            set(args ${args}
                 GIT_TAG ${dep_tag}
             )
-        else()
-            CPMAddPackage(NAME ${dep_name}
-                GIT_REPOSITORY ${dep_git}
-                VERSION ${dep_version}
+        endif()
+        if(dep_header_only)
+            set(args ${args}
+                DOWNLOAD_ONLY True
             )
         endif()
-        if(NOT TARGET "${dep_name}")
+        set(DCMT_LOCAL_PROJECT False)
+        CPMAddPackage(NAME ${dep_name} ${args})
+        if(NOT dep_header_only AND NOT TARGET "${dep_name}")
             message(FATAL_ERROR "ERROR in project configuration: Dependency ${dep_name} did not add target with same name.")
         endif()
-        # Reset is_local for this project
-        set(is_local ${is_local_was})
     elseif(dep_path)
         set(dep_binary_path ${CMAKE_CURRENT_BINARY_DIR}/${dep_path})
         cmake_path(RELATIVE_PATH dep_binary_path BASE_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -319,11 +466,13 @@ macro(parse_dependency json i target_list)
             if(TARGET "${dep_name}")
                 message(FATAL_ERROR "ERROR in project configuration: ${dep_name} is defined as a dependency to ${project_name}, but this target is already defined elsewhere.")
             endif()
+            # Make sure subdirectory tests and examples will be included
+            set(DCMT_LOCAL_PROJECT True)
             add_subdirectory(${dep_path} ${dep_binary_path})
             if(NOT TARGET "${dep_name}")
                 message(FATAL_ERROR "ERROR in project configuration: Dependency ${dep_name} did not add target with same name.")
             endif()
-            # Propagate added subdirecotires outwards
+            # Propagate added subdirectories outwards
             if(NOT CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
                 set(DCMT_ADDED_DIRS ${DCMT_ADDED_DIRS} PARENT_SCOPE)
             endif()
@@ -333,8 +482,15 @@ macro(parse_dependency json i target_list)
             message(FATAL_ERROR "When 'target' is used for dependency, value must be 'true'")
         endif()
     endif()
+    if(dep_header_only)
+        # Create interface library with specified name
+        add_library(${dep_name} INTERFACE)
+        target_include_directories(${dep_name} INTERFACE ${${dep_name}_SOURCE_DIR}/${dep_include})
+    endif()
+
     list(APPEND ${target_list} ${dep_name})
     unset(EXPECTED_PROJECT_NAME)
+    set(DCMT_LOCAL_PROJECT ${local_project_was})
 endmacro()
 
 string(JSON num_deps ERROR_VARIABLE err
@@ -350,11 +506,9 @@ if (err)
     set(num_dev_deps 0)
 endif()
 
-# Include CMake Package Manager if project has dependencies
-if(num_deps GREATER 0 OR num_dev_deps GREATER 0)
-endif()
-
-# Dependencies
+################################################################################
+# Add dependencies                                                             #
+################################################################################
 if (num_deps GREATER 0)
     string(JSON deps_json ERROR_VARIABLE err
         GET ${project_json} "dependencies")
@@ -365,31 +519,24 @@ if (num_deps GREATER 0)
     endforeach()
 endif()
 
-# Dev-dependencies
-if (num_dev_deps GREATER 0 AND is_local)
-    string(JSON dev_deps_json ERROR_VARIABLE err
-        GET ${project_json} "dev-dependencies")
-    check_parse(${err})
-    math(EXPR n "${num_dev_deps} - 1")
-    foreach(i RANGE 0 ${n})
-        parse_dependency(${dev_deps_json} ${i} project_dev_deps)
-    endforeach()
-endif()
-
 ################################################################################
 # Define library                                                               #
 ################################################################################
 file(GLOB_RECURSE lib_sources CONFIGURE_DEPENDS LIST_DIRECTORIES False "${CMAKE_CURRENT_SOURCE_DIR}/src/*")
 if(lib_sources)
-    add_library(${project_name} STATIC ${lib_sources})
+    add_library(${project_name} ${libtype} ${lib_sources})
     target_link_libraries(${project_name} PRIVATE ${project_deps})
     execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/include)
     set_property (TARGET ${project_name}
         PROPERTY Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include
     )
     target_include_directories(${project_name} PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
+    target_include_directories(${project_name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(DEFINED cxx_std)
         set_property(TARGET ${project_name} PROPERTY CXX_STANDARD ${cxx_std})
+    endif()
+    if(libtype STREQUAL SHARED)
+        target_link_options(${project_name} PRIVATE ${link_flags})
     endif()
 endif()
 
@@ -424,87 +571,97 @@ if(app_sources)
         if(DEFINED cxx_std)
             set_target_properties(${target_name} PROPERTIES CXX_STANDARD ${cxx_std})
         endif()
+        target_link_options(${target_name} PRIVATE ${link_flags})
     endforeach()
 endif()
 
 ################################################################################
-# Define examples                                                               #
+# Root project only configuration                                              #
 ################################################################################
-file(GLOB_RECURSE example_sources CONFIGURE_DEPENDS LIST_DIRECTORIES False "${CMAKE_CURRENT_SOURCE_DIR}/example/*")
-# Examples are not built if added as a CPM dependency
-if(example_sources AND is_local)
-    foreach(example_source IN LISTS example_sources)
-        get_filename_component(example_name ${example_source} NAME_WE)
-        set(target_name example-${example_name})
-        add_executable(${target_name} ${example_source})
-        set_target_properties(${target_name} PROPERTIES
-            OUTPUT_NAME ${example_name}
-            RUNTIME_OUTPUT_DIRECTORY example)
+# The following configuration will only be run if project is root project or
+# if DCMT_LOCAL_PROJECT is set to True. The latter will happen for projects added
+# by another DCMT CMakeLists.txt using the path dependency syntax.
+# It will not be added when the project is added as a dependency, e.g. through CPM.
+# NOTE that project-customization.cmake is included below this section. This is
+#      done both when project is root and dependency.
+if(DCMT_LOCAL_PROJECT)
+    ############################################################################
+    # Dev-dependencies                                                         #
+    ############################################################################
+    if (num_dev_deps GREATER 0)
+        string(JSON dev_deps_json ERROR_VARIABLE err
+            GET ${project_json} "dev-dependencies")
+        check_parse(${err})
+        math(EXPR n "${num_dev_deps} - 1")
+        foreach(i RANGE 0 ${n})
+            parse_dependency(${dev_deps_json} ${i} project_dev_deps)
+        endforeach()
+    endif()
+
+    ############################################################################
+    # Define examples                                                          #
+    ############################################################################
+    file(GLOB_RECURSE example_sources CONFIGURE_DEPENDS LIST_DIRECTORIES False
+        "${CMAKE_CURRENT_SOURCE_DIR}/example/*")
+    # Examples are not built if added as a CPM dependency
+    if(example_sources)
+        foreach(example_source IN LISTS example_sources)
+            get_filename_component(example_name ${example_source} NAME_WE)
+            set(target_name example-${example_name})
+            add_executable(${target_name} ${example_source})
+            set_target_properties(${target_name} PROPERTIES
+                OUTPUT_NAME ${example_name}
+                RUNTIME_OUTPUT_DIRECTORY example)
+            if(lib_sources)
+                target_link_libraries(${target_name} PRIVATE ${project_name})
+            endif()
+            target_link_libraries(${target_name} PRIVATE ${project_deps})
+            if (linker_language)
+                set_target_properties(${target_name} PROPERTIES
+                    LINKER_LANGUAGE ${linker_language})
+            endif()
+            if(DEFINED cxx_std)
+                set_target_properties(${target_name} PROPERTIES CXX_STANDARD ${cxx_std})
+            endif()
+            target_link_options(${target_name} PRIVATE ${link_flags})
+            # Add example as test requiring a successful execution of it
+            add_test(NAME test-${project_name}-example-${example_name}
+                COMMAND ${target_name})
+        endforeach()
+    endif()
+    ############################################################################
+    # Define test                                                              #
+    ############################################################################
+    # FPM will create multiple test programs if multiple sources with program
+    # blocks are present. Here we currently only create one...
+    file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS LIST_DIRECTORIES False
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/*")
+    # Tests are not built if added as a CPM dependency
+    if(test_sources)
+        set(test_target test-${project_name})
+        add_executable(${test_target} ${test_sources})
+        execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${CMAKE_CURRENT_BINARY_DIR}/test-include)
+        set_property (TARGET ${test_target}
+            PROPERTY Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test-include
+        )
         if(lib_sources)
-            target_link_libraries(${target_name} PRIVATE ${project_name})
+            target_link_libraries(${test_target} PRIVATE ${project_name})
         endif()
-        target_link_libraries(${target_name} PRIVATE ${project_deps})
+        # project_deps are linked towards project_name with PRIVATE so tests need
+        # explicit link towards them to be able to use them as well
+        target_link_libraries(${test_target} PRIVATE ${project_deps} ${project_dev_deps})
+        # test name prefix may be empty (if CPM dependency). Is used to identify local tests.
+        add_test(NAME ${test_target} COMMAND ${test_target})
         if (linker_language)
-            set_target_properties(${target_name} PROPERTIES LINKER_LANGUAGE ${linker_language})
+            set_target_properties(${test_target} PROPERTIES
+                LINKER_LANGUAGE ${linker_language})
         endif()
         if(DEFINED cxx_std)
-            set_target_properties(${target_name} PROPERTIES CXX_STANDARD ${cxx_std})
+            set_property(TARGET ${test_target} PROPERTY CXX_STANDARD ${cxx_std})
         endif()
-        # Add example as test requiring a successful execution of it
-        add_test(NAME test-${project_name}-example-${example_name}
-            COMMAND ${target_name})
-    endforeach()
-endif()
-
-################################################################################
-# Define test                                                                  #
-################################################################################
-# FPM will create multiple test programs if multiple sources with program blocks are present.
-# Here we currently only create one...
-file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS LIST_DIRECTORIES False "${CMAKE_CURRENT_SOURCE_DIR}/test/*")
-# Tests are not built if added as a CPM dependency
-if(test_sources AND is_local)
-    # Write runner script to build dir
-    set(test_script ${CMAKE_CURRENT_BINARY_DIR}/runtest.cmake)
-    file(WRITE ${test_script} "
-cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
-
-set(cmd \"\${TEST_EXE} \$ENV{TEST_ARGS}\")
-if(DEFINED ENV{TEST_VALGRIND})
-    if(DEFINED ENV{TEST_VALGRIND_ARGS})
-        set(cmd \"valgrind \$ENV{TEST_VALGRIND_ARGS} \${cmd}\")
-    else()
-        set(cmd \"valgrind --error-exitcode=1 --leak-check=full \${cmd}\")
     endif()
-endif()
-
-message(\"Executing \${cmd}\")
-separate_arguments(cmd)
-execute_process(COMMAND \${cmd}
-    COMMAND_ERROR_IS_FATAL ANY)
-    ")
-    set(test_target test-${project_name})
-    add_executable(${test_target} ${test_sources})
-    execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/test-include)
-    set_property (TARGET ${test_target}
-        PROPERTY Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test-include
-    )
-    if(lib_sources)
-        target_link_libraries(${test_target} PRIVATE ${project_name})
-    endif()
-    # project_deps are linked towards project_name with PRIVATE so tests need explicit link towards them to
-    # be able to use them as well
-    target_link_libraries(${test_target} PRIVATE ${project_deps} ${project_dev_deps})
-    # test name prefix may be empty (if CPM dependency). Is used to identify local tests.
-    add_test(NAME ${test_target}
-        COMMAND ${CMAKE_COMMAND} -DTEST_EXE=$<TARGET_FILE:${test_target}>
-             -P${CMAKE_CURRENT_BINARY_DIR}/runtest.cmake)
-    if (linker_language)
-        set_target_properties(${test_target} PROPERTIES LINKER_LANGUAGE ${linker_language})
-    endif()
-    if(DEFINED cxx_std)
-        set_property(TARGET ${test_target} PROPERTY CXX_STANDARD ${cxx_std})
-    endif()
+# Done, root only configuration
 endif()
 
 ################################################################################
