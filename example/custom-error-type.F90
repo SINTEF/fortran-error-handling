@@ -1,3 +1,5 @@
+#ifndef __NVCOMPILER
+! This example segfaults on some NVidia compilers for some reason
 module better_sqrt_inplace_mod
     use error_handling, only: error_t
     implicit none
@@ -63,15 +65,12 @@ program custom_error_type
         type is (negative_value_error_t)
             ! We know better!
             block
-                ! Notice that the variable `error` here masks error from the parent
-                ! scope. This is intentional as `error`in the parent scope is
-                ! already assigned to a value.
-                class(error_t), allocatable :: error
+                class(error_t), allocatable :: error2
 
                 x = - x
-                call sqrt_inplace(x, error)
+                call sqrt_inplace(x, error2)
                 ! If this fails we're out of luck...
-                if (allocated(error)) call error_stop(error)
+                if (allocated(error2)) call error_stop(error2)
                 write(*,*) 'sqrt = ', x, ' * i'
             end block
         class default
@@ -79,3 +78,18 @@ program custom_error_type
             call error_stop(error)
     end select
 end program
+
+#else
+
+program custom_Error_type
+    implicit none
+
+    write(*, '(a)') 'This example does not run on NVidia Fortran'
+end program
+
+! CMake gets confused if a module is excluded during preprocessing
+module better_sqrt_inplace_mod
+    implicit none
+end module
+
+#endif

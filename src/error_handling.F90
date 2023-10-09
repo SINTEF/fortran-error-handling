@@ -31,6 +31,34 @@ module error_handling
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Types for customization API
+    !
+    ! These types are usually only needed for advanced usage. They are kept
+    ! at the top because some Fortran compilers are more picky about declaration
+    ! than orders. The most commonly used procedures are defined further down
+    ! in this module.
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    !> An error_handler_t can be used to extend or customize error handling
+    !! for an application. When an `error_report_t` is created, a custom
+    !! `error_hook_t` (see below) is asked to create a handler.
+    !! This means that a `error_handler_t` could load and keep e.g. a
+    !! stacktrace to know where the error ocurred.
+    type, abstract :: error_handler_t
+    contains
+        procedure(format_error_i), deferred :: format_error
+    end type
+
+
+    !> The type responsible for creating handlers for error reports.
+    type, abstract :: error_hook_t
+    contains
+        procedure(create_handler_i), deferred :: create_handler
+    end type
+
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Types used for error reporting by this module
     !
     ! For conventional use, it will usually not be neccesary to use these
@@ -38,6 +66,20 @@ module error_handling
     ! if the regular `to_chars` function on `error_t` does not provide sufficient
     ! flexibility when presenting the error to the user.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    !> An error_chain_t contains an error and the cause of this error. The
+    !! cause is itself an error_chain_t so the type can be used to recursively
+    !! describe a chain of context down to the root cause.
+    type :: error_chain_t
+        !> The error
+        class(error_t), allocatable :: error
+#ifndef __NVCOMPILER
+        ! NVidia Fortran doesn't like recursive types
+        !> Cause of the error
+        type(error_chain_t), allocatable :: cause
+#endif
+    end type
 
 
     !> The error type that `fail` and `wrap_error` produce. It has an
@@ -62,17 +104,6 @@ module error_handling
             character(len=:), allocatable :: chars
         end function
     end interface
-
-
-    !> An error_chain_t contains an error and the cause of this error. The
-    !! cause is itself an error_chain_t so the type can be used to recursively
-    !! describe a chain of context down to the root cause.
-    type :: error_chain_t
-        !> The error
-        class(error_t), allocatable :: error
-        !> Cause of the error
-        type(error_chain_t), allocatable :: cause
-    end type
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -147,17 +178,6 @@ module error_handling
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !> An error_handler_t can be used to extend or customize error handling
-    !! for an application. When an `error_report_t` is created, a custom
-    !! `error_hook_t` (see below) is asked to create a handler.
-    !! This means that a `error_handler_t` could load and keep e.g. a
-    !! stacktrace to know where the error ocurred.
-    type, abstract :: error_handler_t
-    contains
-        procedure(format_error_i), deferred :: format_error
-    end type
-
-
     abstract interface
         !> Generate a character representation of the error which this handler is
         !! attached to, optionally using additional data from the handler itself.
@@ -169,13 +189,6 @@ module error_handling
             character(len=:), allocatable :: chars
         end function
     end interface
-
-
-    !> The type responsible for creating handlers for error reports.
-    type, abstract :: error_hook_t
-    contains
-        procedure(create_handler_i), deferred :: create_handler
-    end type
 
 
     abstract interface

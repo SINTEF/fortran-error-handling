@@ -1,0 +1,270 @@
+# { "version": "1.0.0" }
+###############################################################################
+# Generic GitLab Pipeline for Fortran libraries
+#
+# To use this template, save in the repo root as .gitlab-ci-fortran-lib.yml and
+# create a file .gitlab-ci.yml with the following content (adjust variable values to fit):
+#
+# variables:
+#   # Configuration of which OS/compiler combinations should be used
+#   # Note: Enabled options must explicitly be set to the exact string "On".
+#   BUILD_INTEL_WINDOWS: "On"
+#   BUILD_INTEL_LINUX: "On"
+#   BUILD_NVIDIA_LINUX: "On"
+#   BUILD_LINUX_GCC: "On"
+#   # Perform code coverage with Intel compiler? To enable, set to the exact string "On"
+#   INTEL_CODE_COVERAGE: "On"
+#
+# include: .gitlab-ci-fortran-lib.yml
+#
+###############################################################################
+
+# Define stages
+stages:
+  # This stage will build the library and run tests for different OS/compiler combinations
+  - build-test
+  # This stage can be run manually for the main branch or release-branches in order to tag
+  # a release with the version number specified in CMake
+  - deploy
+
+workflow:
+  rules:
+  # Don't run CI for tags (jobs should already have been run for the branch with the commit)
+  - if: $CI_COMMIT_TAG
+    when: never
+  # Run pipeline for branches
+  - if: $CI_COMMIT_BRANCH
+
+#
+# Script components used in multiple jobs
+#
+
+.base-setup: &base-setup
+  # Define bash functions to make sections in the log shown on GitLab
+  # https://docs.gitlab.com/ee/ci/jobs/#custom-collapsible-sections
+  - ci_section_start() { echo -e "\e[0Ksection_start:`date +%s`:$1[collapsed=true]\r\e[0K" $2; }
+  - ci_section_end() { echo -e "\e[0Ksection_end:`date +%s`:$1\r\e[0K"; }
+  # Replace git urls when cloning dependencies
+  # Variables SIMA_ACCESS_USER and SIMA_ACCESS_TOKEN is defined CI variables at the group level:
+  # https://gitlab.sintef.no/groups/sima/-/settings/ci_cd
+  - git config --global url."https://${SIMA_ACCESS_USER}:${SIMA_ACCESS_TOKEN}@gitlab.sintef.no/".insteadOf "https://gitlab.sintef.no/"
+  - git config --global url."https://${SIMA_ACCESS_USER}:${SIMA_ACCESS_TOKEN}@gitlab.sintef.no/".insteadOf "git@gitlab.sintef.no:"
+  # Default extra args to CMake configuration (empty)
+  - export CMAKE_ARGS=""
+
+.intel-linux-setup: &intel-linux-setup
+  - *base-setup
+  - export PYTHON=python3.9
+  - export CODECOV_TO_COBERTURA=/tools/codecov-to-cobertura.py
+  - |
+    if [[ $INTEL_CODE_COVERAGE == "On" ]]; then
+      export CMAKE_ARGS="$CMAKE_ARGS -DCODE_COVERAGE=On"
+    fi
+
+# Commands to setup environment on Windows with Intel compiler
+.intel-windows-setup:  &intel-windows-setup
+  - *base-setup
+  - ci_section_start setup_env "Setup Build Environment"
+  # These lines create a batch file which we will run in order to obtain the Intel OneAPI
+  # environment variables which in turn is written to a file. Then we source this file
+  # to get the variables into the runner script environment
+  - |
+    cat <<EOT > getvars.bat
+      echo "Load vcvars64"^
+      && call "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat"^
+      && echo "Load Intel compiler vars"^
+      && call "C:/Program Files (x86)/Intel/oneAPI/compiler/2023.1.0/env/vars.bat"^
+      && echo "Load Intel MKL vars"^
+      && call "C:/Program Files (x86)/Intel/oneAPI/mkl/2023.1.0/env/vars.bat"^
+      && echo "Store environment"^
+      && bash.exe -c "env > vars.env"
+    EOT
+  - cmd.exe //c getvars.bat
+  # Filter out empty lines, names illegal in bash, GitLab CI variables (they are untouched
+  # by the above script) and lines from variables containing a newline
+  - source <(cat vars.env | grep '^[a-zA-Z0-9_]*=.*' | grep -v "^CI_" | sed -e 's:\\:\\\\:g' -e 's:\(.*\):export "\1":')
+  # - export FC=ifx; export CC=cl; export CXX=cl
+  - export FC=ifort; export CC=cl; export CXX=cl
+  - export PYTHON=python.exe
+  - export CODECOV_TO_COBERTURA=c:/bin/codecov-to-cobertura.py
+  - |
+    if [[ $INTEL_CODE_COVERAGE == "On" ]]; then
+      export CMAKE_ARGS="$CMAKE_ARGS -DCODE_COVERAGE=On"
+    fi
+  - ci_section_end setup_env
+
+# Commands to perform code coverage analysis when using the Intel compiler
+.intel-codecov: &intel-codecov
+  - |
+    cd build/ci/
+    if [[ $INTEL_CODE_COVERAGE == "On" ]]; then
+      ci_section_start codecov "Code Coverage Analysis"
+      cd code-coverage
+      profmerge
+      codecov -prj ${CI_PROJECT_NAME} -dpi pgopti.dpi -spi pgopti.spi -xmlbcvrg codecov.xml
+      $PYTHON $CODECOV_TO_COBERTURA codecov.xml ../../../ ../ code-coverage.xml
+      cd ../
+      ci_section_end codecov
+    else
+      # Make a dummy code-coverage.xml to avoid that artifact upload fails
+      mkdir code-coverage
+      cd code-coverage
+      touch code-coverage.xml
+      cd ../
+    fi
+    cd ../../
+
+# Commands to build library and run tests
+.build-test: &build-test
+  - ci_section_start configure "Configure build"
+  - rm -rf build/
+  - mkdir -p build/ci/ && cd build/ci
+  - cmake ../../ -DCMAKE_BUILD_TYPE=$BUILD_TYPE $CMAKE_ARGS -G"$GENERATOR"
+  - ci_section_end configure
+  - ci_section_start build "Build"
+  - cmake --build .
+  - ci_section_end build
+  - ci_section_start test "Run Tests"
+  - ctest . -j $(nproc) --output-junit test-report.xml --test-output-size-failed 5242880 --test-output-truncation head
+  - ci_section_end test
+
+# Commands to process test results after a run of .build-test
+.process-tests: &process-tests
+  - cd build/ci
+  - |
+    if [[ -f test-report.xml ]]; then
+      # Tests have been run
+      echo "Test report found"
+      # Monkey-patch CTest's JUnit report to match GitLab expectations. See https://gitlab.kitware.com/cmake/cmake/-/issues/22478#note_1406956
+      sed -i -e 's:message=""::g' -e 's:message="Failed"::g' -e 's:<system-out>:<system-err>:g' -e 's:</system-out>:</system-err>:g' test-report.xml
+    fi
+  - cd ../../
+
+# Commands to extract the version number from a CMake build folder
+.get-version-from-cmake: &get-version-from-cmake
+  - ci_section_start version "Parse version number"
+  - sed -n 's/^CMAKE_PROJECT_VERSION:.*=\(.*\)$/\1/p' CMakeCache.txt > version.txt
+  - echo "Library version is $(cat version.txt)"
+  - ci_section_end version
+
+#
+# Define the different pipeline jobs
+#
+
+Build & Test Intel Windows:
+  rules:
+    - if: $BUILD_INTEL_WINDOWS == "On"
+  stage: build-test
+  tags:
+    - windows
+    - bash
+    - intel-fortran
+  variables:
+    BUILD_TYPE: RelWithChecks
+    # Until bug in ifort is fixed, then use Ninja
+    GENERATOR: NMake Makefiles JOM
+  script:
+    - *intel-windows-setup
+    - *build-test
+    - *get-version-from-cmake
+  after_script:
+    - *intel-windows-setup
+    - *intel-codecov
+    - *process-tests
+  coverage: '/^Code coverage: \d+\.\d+%$/'
+  artifacts:
+    paths:
+      - build/ci/version.txt
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: build/ci/code-coverage/code-coverage.xml
+      junit: build/ci/test-report.xml
+
+Build & Test Intel Linux:
+  rules:
+    - if: $BUILD_INTEL_LINUX == "On"
+  stage: build-test
+  tags:
+    - linux
+  image: gitlab.sintef.no:5050/sima/ssrv-operations/intel-compilers:2023.0.0-1
+  variables:
+    BUILD_TYPE: RelWithChecks
+    # Until bug in ifort is fixed, then use Ninja
+    GENERATOR: Unix Makefiles
+  script:
+    - *intel-linux-setup
+    - *build-test
+  after_script:
+    - *intel-linux-setup
+    - *intel-codecov
+    - *process-tests
+  coverage: '/^Code coverage: \d+\.\d+%$/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: build/ci/code-coverage/code-coverage.xml
+      junit: build/ci/test-report.xml
+
+Build & Test NVidia Linux:
+  rules:
+    - if: $BUILD_NVIDIA_LINUX == "On"
+  stage: build-test
+  tags:
+    - linux
+  image: gitlab.sintef.no:5050/sima/ssrv-operations/nvhpc-compilers:22.11-1
+  variables:
+    BUILD_TYPE: RelWithChecks
+    GENERATOR: Ninja
+  script:
+    - *base-setup
+    - *build-test
+  after_script:
+    - *base-setup
+    - *process-tests
+  artifacts:
+    reports:
+      junit: build/ci/test-report.xml
+
+Build & Test Linux GCC:
+  rules:
+    - if: $BUILD_LINUX_GCC == "On"
+  stage: build-test
+  tags:
+    - linux
+  image: gitlab.sintef.no:5050/sima/ssrv-operations/gcc-compilers:13.2.0-1
+  variables:
+    BUILD_TYPE: RelWithChecks
+    GENERATOR: Ninja
+  script:
+    - *base-setup
+    - *build-test
+  after_script:
+    - *base-setup
+    - *process-tests
+  artifacts:
+    reports:
+      junit: build/ci/test-report.xml
+
+Deploy Release:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.*/
+  stage: deploy
+  when: manual
+  tags:
+    - linux
+  needs:
+    - job: Build & Test Intel Windows
+      artifacts: true
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.9.0
+  script:
+    # Read version information retrieved from CMake and stored in an artifact
+    - version=$(cat build/ci/version.txt)
+    - echo "Version is $version"
+    # This doesn't seem to be used, but just to be sure
+    - export CI_COMMIT_TAG=$version
+    # Create release and corresponding git tag
+    - release-cli create --name "${CI_PROJECT_NAME} $version" --description "Release version $version" --tag-name "v${version}"
+
